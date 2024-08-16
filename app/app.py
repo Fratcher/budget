@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 basedir = os.path.dirname(__file__)
 db_path = os.path.join(basedir, 'data', 'budget.db')  # Update the path to point to the dist folder
 
+
 class AddTransactionWindow(QtWidgets.QWidget):
 
     def __init__(self, main_window):
@@ -29,6 +30,10 @@ class AddTransactionWindow(QtWidgets.QWidget):
         self.date_input.setPlaceholderText("Date (YYYY-MM-DD)")
         layout.addWidget(self.date_input)
 
+        self.category_input = QtWidgets.QComboBox(self)
+        self.category_input.addItems(["Personal", "Groceries", "Rent", "Gas"])
+        layout.addWidget(self.category_input)
+
         add_button = QPushButton("Add Transaction")
         add_button.clicked.connect(self.add_transaction)
         layout.addWidget(add_button)
@@ -39,12 +44,13 @@ class AddTransactionWindow(QtWidgets.QWidget):
         description = self.description_input.text()
         amount = float(self.amount_input.text())
         date = self.date_input.text()
+        category = self.category_input.currentText()
 
         conn = sqlite3.connect(db_path)
         c = conn.cursor()
 
         # Insert the new transaction
-        c.execute("INSERT INTO transactions (description, amount, date) VALUES (?, ?, ?)", (description, amount, date))
+        c.execute("INSERT INTO transactions (description, amount, date, category) VALUES (?, ?, ?, ?)", (description, amount, date, category))
 
         # Fetch the current amount
         c.execute("SELECT amount FROM money WHERE id = 1")
@@ -60,6 +66,7 @@ class AddTransactionWindow(QtWidgets.QWidget):
         self.main_window.update_data()
         self.close()
 
+
 class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self):
@@ -67,7 +74,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.setWindowTitle("Budget Buddy")
         self.resize(1000, 800)
-        layout = QVBoxLayout()
+
+        # Create a central widget and layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
 
         # Connect to the database
         self.conn = sqlite3.connect(db_path)
@@ -89,7 +100,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.monthly_spent_label)
 
         # Money spent this year
-        self.yearly_spent_label = QLabel("Money Invested: $702.00")
+        self.yearly_spent_label = QLabel("Money Spent This Year: $0.00")
         self.yearly_spent_label.setMargin(10)
         layout.addWidget(self.yearly_spent_label)
 
@@ -110,11 +121,13 @@ class MainWindow(QtWidgets.QMainWindow):
         delete_transaction_button.clicked.connect(self.delete_transaction)
         layout.addWidget(delete_transaction_button)
 
-        container = QWidget()
-        container.setLayout(layout)
-
-        self.setCentralWidget(container)
-        self.show()
+        self.category_labels = {}
+        categories = ["Personal", "Groceries", "Rent", "Gas"]
+        for category in categories:
+            label = QLabel(f"{category} Spending This Month: $0.00")
+            label.setMargin(10)
+            layout.addWidget(label)
+            self.category_labels[category] = label
 
         self.update_data()
 
@@ -130,7 +143,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         selected_item = selected_items[0]
         transaction_text = selected_item.text()
-        description, amount, date = transaction_text.split(": $")[0], float(transaction_text.split(": $")[1].split(" on ")[0]), transaction_text.split(" on ")[1]
+        description, amount, date = transaction_text.split(": $")[0], float(transaction_text.split(": $")[1].split(" on ")[0]), transaction_text.split(" on ")[1].split(" (")[0]
 
         conn = sqlite3.connect(db_path)
         c = conn.cursor()
@@ -166,8 +179,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.c.execute("SELECT SUM(amount) FROM transactions WHERE date LIKE ? AND amount < 0", (current_month + '%',))
         monthly_spent = self.c.fetchone()[0] or 0.0
 
+        # Calculate monthly spending by category
+        categories = ["Personal", "Groceries", "Rent", "Gas"]
+        category_spending = {}
+        for category in categories:
+            self.c.execute("SELECT SUM(amount) FROM transactions WHERE date LIKE ? AND amount < 0 AND category = ?", (current_month + '%', category))
+            category_spending[category] = self.c.fetchone()[0] or 0.0
+
         # Fetch recent transactions
-        self.c.execute("SELECT description, amount, date FROM transactions ORDER BY date DESC LIMIT 5")
+        self.c.execute("SELECT description, amount, date, category FROM transactions ORDER BY date DESC LIMIT 5")
         transactions = self.c.fetchall()
 
         # Update labels
@@ -178,14 +198,22 @@ class MainWindow(QtWidgets.QMainWindow):
         # Update recent transactions list
         self.recent_transactions_list.clear()
         for transaction in transactions:
-            self.recent_transactions_list.addItem(f"{transaction[0]}: ${transaction[1]:.2f} on {transaction[2]}")
+            self.recent_transactions_list.addItem(f"{transaction[0]}: ${transaction[1]:.2f} on {transaction[2]} ({transaction[3]})")
+
+        # Update category spending labels
+        for category, amount in category_spending.items():
+            self.category_labels[category].setText(f"{category} Spending This Month: ${amount:.2f}")
 
     def closeEvent(self, event):
         self.conn.close()
         event.accept()
 
+
+
+
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     app.setWindowIcon(QtGui.QIcon(os.path.join(basedir, 'icons', 'icon.svg')))
     w = MainWindow()
+    w.show()
     app.exec()
